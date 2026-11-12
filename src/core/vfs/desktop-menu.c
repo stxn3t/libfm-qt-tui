@@ -1142,8 +1142,28 @@ static gboolean desktop_menu_setup_monitors(gpointer data) {
     return G_SOURCE_REMOVE;
 }
 
+static DesktopMenu *desktop_menu_lookup_with_prefix(const char *menu_file_name, const char *prefix,
+                                                    GError **error);
+
 DesktopMenu *desktop_menu_lookup(const char *menu_file_name, GError **error) {
     const char *prefix = g_getenv("XDG_MENU_PREFIX");
+    GError *err = NULL;
+    DesktopMenu *dm = desktop_menu_lookup_with_prefix(menu_file_name, prefix, &err);
+    if(dm == NULL && prefix && *prefix && g_strcmp0(menu_file_name, "applications.menu") == 0) {
+        /* A prefix set by another desktop (e.g. "arch-", "plasma-") whose
+           <prefix>applications.menu isn't installed: fall back to lxqt's own
+           file manager menu, as when no prefix is set at all. */
+        g_clear_error(&err);
+        dm = desktop_menu_lookup_with_prefix("lxqt-applications-fm.menu", "", &err);
+    }
+    if(err) {
+        g_propagate_error(error, err);
+    }
+    return dm;
+}
+
+static DesktopMenu *desktop_menu_lookup_with_prefix(const char *menu_file_name, const char *prefix,
+                                                    GError **error) {
     DesktopMenu *dm = g_new0(DesktopMenu, 1);
 
     dm->ref_count = 1;
