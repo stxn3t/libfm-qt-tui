@@ -36,6 +36,7 @@
 #include "filemenu_p.h"
 
 #include "core/archiver.h"
+#include "tty.h"
 
 #include "core/legacy/fm-app-info.h"
 
@@ -331,10 +332,21 @@ FileMenu::FileMenu(Fm::FileInfoList files, std::shared_ptr<const Fm::FileInfo> i
        && !(sameFilesystem_ && path.hasUriScheme("computer"))) {
         auto archiver = Archiver::defaultArchiver();
         if(archiver) {
+            // tty look: a dim ":: ark" heading above the archiver actions
+            auto addTtyHeading = [this, archiver]() {
+                if(Tty::enabled()) {
+                    QString name = QString::fromUtf8(archiver->program()).section(QLatin1Char(' '), 0, 0);
+                    QAction* heading = new QAction(QStringLiteral(":: ") + name, this);
+                    heading->setEnabled(false);
+                    heading->setObjectName(QStringLiteral("ttyMenuHeading"));
+                    addAction(heading);
+                }
+            };
             if(sameType_ && archiver->isMimeTypeSupported(mime_type->name())) {
                 QAction* archiverSeparator = nullptr;
                 if(cwd_ && archiver->canExtractArchivesTo()) {
                     archiverSeparator = addSeparator();
+                    addTtyHeading();
                     QAction* action = new QAction(tr("Extract to..."), this);
                     connect(action, &QAction::triggered, this, &FileMenu::onExtract);
                     addAction(action);
@@ -342,6 +354,7 @@ FileMenu::FileMenu(Fm::FileInfoList files, std::shared_ptr<const Fm::FileInfo> i
                 if(archiver->canExtractArchives()) {
                     if(!archiverSeparator) {
                         addSeparator();
+                        addTtyHeading();
                     }
                     QAction* action = new QAction(tr("Extract Here"), this);
                     connect(action, &QAction::triggered, this, &FileMenu::onExtractHere);
@@ -350,6 +363,7 @@ FileMenu::FileMenu(Fm::FileInfoList files, std::shared_ptr<const Fm::FileInfo> i
             }
             else if(archiver->canCreateArchive()) {
                 addSeparator();
+                addTtyHeading();
                 QAction* action = new QAction(tr("Compress"), this);
                 connect(action, &QAction::triggered, this, &FileMenu::onCompress);
                 addAction(action);

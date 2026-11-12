@@ -19,6 +19,7 @@
 
 
 #include "fileoperationdialog.h"
+#include "tty.h"
 #include "fileoperation.h"
 #include "renamedialog.h"
 #include <QLabel>
@@ -79,6 +80,7 @@ FileOperationDialog::FileOperationDialog(FileOperation* _operation):
     }
     ui->message->setText(message);
     setWindowTitle(title);
+    Tty::boxDialog(this, title);
 }
 
 

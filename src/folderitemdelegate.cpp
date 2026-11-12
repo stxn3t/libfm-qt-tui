@@ -20,6 +20,7 @@
 
 #include "folderitemdelegate.h"
 #include "foldermodel.h"
+#include "tty.h"
 #include <QPainter>
 #include <QModelIndex>
 #include <QAbstractItemView>
@@ -38,6 +39,48 @@
 #include <algorithm>
 
 namespace Fm {
+
+// tty look: ls-style name colours, a "> " cursor before the current item in
+// list views, and (optionally) no icons in list views. No-op outside tty mode.
+static void ttyAdjustOption(QStyleOptionViewItem& opt, const QModelIndex& index,
+                            const std::shared_ptr<const Fm::FileInfo>& file, bool listMode) {
+    if(!Tty::enabled()) {
+        return;
+    }
+    const auto& c = Tty::colors();
+    QColor color = (index.column() == 0) ? Tty::colorForFile(file) : QColor();
+    if(color.isValid()) {
+        opt.palette.setColor(QPalette::Text, color);
+        opt.palette.setColor(QPalette::WindowText, color);
+        opt.palette.setColor(QPalette::HighlightedText, color);
+    }
+    else if(index.column() == 0) {
+        opt.palette.setColor(QPalette::HighlightedText, file ? c.fg : c.accent);
+    }
+    if(!listMode) {
+        return;
+    }
+    if(index.column() == 0 && !index.parent().isValid()
+       && opt.widget && opt.widget->inherits("Fm::PlacesView")) {
+        // section headings of the side pane: ":: devices"
+        opt.text = QStringLiteral(":: ") + opt.text.toLower();
+        opt.palette.setColor(QPalette::Text, c.fgDim);
+        opt.palette.setColor(QPalette::HighlightedText, c.fgDim);
+    }
+    else if(index.column() == 0) {
+        opt.text = Tty::cursorPrefix(opt.state & QStyle::State_Selected) + opt.text;
+    }
+    else {
+        // secondary columns (size, date, type...) are dim, like the mockup
+        opt.palette.setColor(QPalette::Text, c.fgDim);
+        opt.palette.setColor(QPalette::HighlightedText, c.fgDim);
+    }
+    if(!Tty::listIcons()) {
+        opt.icon = QIcon();
+        opt.features &= ~QStyleOptionViewItem::HasDecoration;
+        opt.decorationSize = QSize(0, 0);
+    }
+}
 
 FolderItemDelegate::FolderItemDelegate(QAbstractItemView* view, QObject* parent):
     QStyledItemDelegate(parent ? parent : view),
@@ -91,6 +134,7 @@ QSize FolderItemDelegate::sizeHint(const QStyleOptionViewItem& option, const QMo
     QStyleOptionViewItem opt = option;
     initStyleOption(&opt, index);
     opt.decorationSize = option.decorationSize; // requested by the view
+    ttyAdjustOption(opt, index, index.data(fileInfoRole_).value<std::shared_ptr<const Fm::FileInfo>>(), true);
     const QWidget* widget = option.widget;
     QStyle* style = widget ? widget->style() : QApplication::style();
     return style->sizeFromContents(QStyle::CT_ItemViewItem, &opt, QSize(), widget);
@@ -121,6 +165,9 @@ void FolderItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& op
 
     QStyleOptionViewItem opt = option;
     initStyleOption(&opt, index);
+    const bool listMode = !(option.decorationPosition == QStyleOptionViewItem::Top ||
+                            option.decorationPosition == QStyleOptionViewItem::Bottom);
+    ttyAdjustOption(opt, index, file, listMode);
 
     // distinguish the hidden items visually by making their texts italic
     bool shadowIcon(false);
@@ -261,8 +308,13 @@ void FolderItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& op
 
         const QWidget* widget = opt.widget;
         QStyle* style = widget ? widget->style() : QApplication::style();
-        opt.decorationSize = option.decorationSize; // for a better text alignment
+        if(Tty::listIcons()) {
+            opt.decorationSize = option.decorationSize; // for a better text alignment
+        }
         style->drawControl(QStyle::CE_ItemViewItem, &opt, painter, widget);
+        if(!Tty::listIcons() || (Tty::enabled() && index.column() != 0)) {
+            return; // no icon, so no emblems to draw on it
+        }
 
         if(isCut && !opt.icon.isNull()) {
             // restore the original icon to not make it translucent more than once

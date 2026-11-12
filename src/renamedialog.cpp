@@ -19,6 +19,7 @@
 
 
 #include "renamedialog.h"
+#include "tty.h"
 #include "ui_rename-dialog.h"
 #include <QStringBuilder>
 #include <QPushButton>
@@ -38,6 +39,7 @@ RenameDialog::RenameDialog(const FileInfo &src, const FileInfo &dest, QWidget* p
 
     ui = new Ui::RenameDialog();
     ui->setupUi(this);
+    Tty::boxDialog(this, tr("file exists"));
 
     auto path = dest.path();
     auto srcIcon = src.icon();

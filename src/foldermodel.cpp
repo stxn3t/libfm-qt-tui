@@ -19,6 +19,7 @@
 
 
 #include "foldermodel.h"
+#include "tty.h"
 #include <iostream>
 #include <algorithm>
 #include <QtAlgorithms>
@@ -417,7 +418,7 @@ QVariant FolderModel::headerData(int section, Qt::Orientation orientation, int r
                 title = tr("Group");
                 break;
             }
-            return QVariant(title);
+            return QVariant(Tty::enabled() ? title.toLower() : title);
         }
     }
     return QVariant();

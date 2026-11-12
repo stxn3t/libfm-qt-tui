@@ -18,6 +18,7 @@
  */
 
 #include "folderview.h"
+#include "tty.h"
 #include "foldermodel.h"
 #include <QHeaderView>
 #include <QVBoxLayout>
@@ -1116,6 +1117,10 @@ void FolderView::setViewMode(ViewMode _mode) {
         delegate = new FolderItemDelegate(treeView);
         delegate->setShadowHidden(shadowHidden_);
         treeView->setItemDelegateForColumn(FolderModel::ColumnFileName, delegate);
+        if(Tty::enabled()) {
+            // dim secondary columns (size, date, type) in the tty look
+            treeView->setItemDelegate(delegate);
+        }
     }
     else {
         FolderViewListView* listView;
