@@ -17,6 +17,8 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QSplitter>
+#include <QStackedWidget>
+#include <QFontMetrics>
 
 namespace Fm {
 namespace Tty {
@@ -25,29 +27,13 @@ namespace {
 bool g_enabled = false;
 bool g_listIcons = false;
 Colors g_colors;
+Metrics g_metrics;
+qreal g_opacity = 1.0;
 
 // Where a box's top border line sits, measured from the top of the widget.
-// Boxes styled by the tty stylesheet get `margin-top: 8px`, and boxDialog()
-// paints its border at the same height, so one number serves both.
+// Boxes styled by the tty stylesheet get `margin-top: 8px`; a box may move
+// its line down with the "ttyLineY" property.
 constexpr int kLineY = 8;
-
-class BorderPainter : public QObject {
-public:
-    explicit BorderPainter(QWidget* w) : QObject(w) {}
-    bool eventFilter(QObject* watched, QEvent* event) override {
-        if(event->type() == QEvent::Paint) {
-            QWidget* w = static_cast<QWidget*>(watched);
-            QPainter p(w);
-            p.setRenderHint(QPainter::Antialiasing, true);
-            QPen pen(colors().borderHover);
-            pen.setWidthF(1.0);
-            p.setPen(pen);
-            QRectF r = QRectF(w->rect()).adjusted(4.5, kLineY + 0.5, -4.5, -4.5);
-            p.drawRoundedRect(r, 3, 3);
-        }
-        return false;
-    }
-};
 } // namespace
 
 bool enabled() { return g_enabled; }
@@ -55,6 +41,18 @@ void setEnabled(bool enabled) { g_enabled = enabled; }
 
 const Colors& colors() { return g_colors; }
 void setColors(const Colors& colors) { g_colors = colors; }
+
+const Metrics& metrics() { return g_metrics; }
+void setMetrics(const Metrics& metrics) { g_metrics = metrics; }
+
+qreal opacity() { return g_opacity; }
+void setOpacity(qreal opacity) { g_opacity = qBound(0.0, opacity, 1.0); }
+
+QColor translucent(const QColor& color) {
+    QColor c(color);
+    c.setAlphaF(color.alphaF() * g_opacity);
+    return c;
+}
 
 bool listIcons() { return !g_enabled || g_listIcons; }
 void setListIcons(bool show) { g_listIcons = show; }
@@ -95,102 +93,154 @@ QString cursorPrefix(bool current) {
 
 // ---------------------------------------------------------------------------
 
-FloatingLabel::FloatingLabel(QWidget* framed, QWidget* host)
-    : QLabel(host), framed_(framed) {
+FloatingLabel::FloatingLabel(QWidget* framed, int inset)
+    : QWidget(framed), framed_(framed), inset_(inset) {
     setObjectName(QStringLiteral("ttyLabel"));
     setAttribute(Qt::WA_TransparentForMouseEvents, true);
-    setAutoFillBackground(true);
-    setContentsMargins(6, 0, 6, 0);
-    setHot(false);
+    setAttribute(Qt::WA_NoSystemBackground, true);
+    setAttribute(Qt::WA_TranslucentBackground, true);
+    setFocusPolicy(Qt::NoFocus);
     framed->setAttribute(Qt::WA_Hover, true);
     framed->installEventFilter(this);
-    if(host != framed) {
-        host->installEventFilter(this);
+    // a stacked widget raises the page it switches to: stay above it
+    if(auto stack = qobject_cast<QStackedWidget*>(framed)) {
+        connect(stack, &QStackedWidget::currentChanged, this, &FloatingLabel::keepOnTop);
     }
+    sync();
 }
 
-FloatingLabel* FloatingLabel::attach(QWidget* framed, const QString& text, QWidget* host) {
+FloatingLabel* FloatingLabel::attach(QWidget* framed, const QString& text, int inset) {
     if(!g_enabled || !framed) {
         return nullptr;
     }
-    if(!host) {
-        host = framed->parentWidget();
-    }
-    if(!host || qobject_cast<QSplitter*>(host)) {
-        host = framed;
-    }
-    auto label = new FloatingLabel(framed, host);
+    auto label = new FloatingLabel(framed, inset);
     label->setLabel(text);
-    label->reposition();
+    label->show();
     return label;
 }
 
 void FloatingLabel::setLabel(const QString& text) {
-    setText(text.toLower());
-    adjustSize();
-    reposition();
+    text_ = text.toLower();
+    update();
 }
 
-void FloatingLabel::setHot(bool hot) {
-    QPalette pal = palette();
-    pal.setColor(QPalette::Window, g_colors.bg);
-    pal.setColor(QPalette::WindowText, hot ? g_colors.accent : g_colors.fgDim);
-    setPalette(pal);
-    // the stylesheet may also style #ttyLabel; keep the hover colour authoritative
-    setStyleSheet(QStringLiteral("color: %1; background: %2;")
-                  .arg(hot ? g_colors.accent.name() : g_colors.fgDim.name(), g_colors.bg.name()));
+void FloatingLabel::sync() {
+    if(framed_) {
+        setGeometry(framed_->rect());
+        keepOnTop();
+        update();
+    }
 }
 
-void FloatingLabel::reposition() {
+void FloatingLabel::keepOnTop() {
+    if(parentWidget() && parentWidget()->children().constLast() != this) {
+        raise();
+    }
+}
+
+void FloatingLabel::paintEvent(QPaintEvent* /*event*/) {
     if(!framed_) {
         return;
     }
-    QWidget* host = parentWidget();
-    QPoint origin = (host == framed_) ? QPoint(0, 0) : framed_->mapTo(host, QPoint(0, 0));
-    // a box may move its border line down (property "ttyLineY", in px)
-    const QVariant lineY = framed_->property("ttyLineY");
-    int y = origin.y() + (lineY.isValid() ? lineY.toInt() : kLineY) - height() / 2;
-    move(origin.x() + 10, y);
-    setVisible(framed_->isVisible() && !text().isEmpty());
-    raise();
+    const QVariant lineProp = framed_->property("ttyLineY");
+    const int lineY = lineProp.isValid() ? lineProp.toInt() : kLineY;
+    const qreal bw = g_metrics.borderWidth;
+    const qreal half = bw / 2.0;
+    const QRectF box = QRectF(rect()).adjusted(inset_ + half, lineY + half, -inset_ - half, -inset_ - half);
+    if(box.width() <= 0 || box.height() <= 0) {
+        return;
+    }
+
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing, true);
+
+    // the label text and the gap it leaves in the line
+    QFont font = framed_->font();
+    font.setPixelSize(g_metrics.labelPixelSize);
+    font.setWeight(QFont::Weight(g_metrics.labelWeight));
+    p.setFont(font);
+    const QFontMetrics fm(font);
+    const qreal textX = box.left() + 10 + 6;
+    const qreal textW = text_.isEmpty() ? 0 : fm.horizontalAdvance(text_);
+    const qreal gapL = textX - 6;
+    const qreal gapR = textX + textW + 6;
+
+    QPen pen(hot_ ? g_colors.borderHover : g_colors.border);
+    pen.setWidthF(bw);
+    pen.setStyle(g_metrics.borderStyle);
+    pen.setCapStyle(Qt::FlatCap);
+    p.setPen(pen);
+    p.setBrush(Qt::NoBrush);
+
+    QPainterPath path;
+    const qreal r = qMin<qreal>(g_metrics.radius, qMin(box.width(), box.height()) / 2);
+    if(textW > 0) {
+        // start right of the gap, go clockwise round the box, stop left of it
+        path.moveTo(gapR, box.top());
+        path.lineTo(box.right() - r, box.top());
+        path.arcTo(QRectF(box.right() - 2 * r, box.top(), 2 * r, 2 * r), 90, -90);
+        path.lineTo(box.right(), box.bottom() - r);
+        path.arcTo(QRectF(box.right() - 2 * r, box.bottom() - 2 * r, 2 * r, 2 * r), 0, -90);
+        path.lineTo(box.left() + r, box.bottom());
+        path.arcTo(QRectF(box.left(), box.bottom() - 2 * r, 2 * r, 2 * r), 270, -90);
+        path.lineTo(box.left(), box.top() + r);
+        path.arcTo(QRectF(box.left(), box.top(), 2 * r, 2 * r), 180, -90);
+        path.lineTo(gapL, box.top());
+    }
+    else {
+        path.addRoundedRect(box, r, r);
+    }
+    p.drawPath(path);
+
+    if(textW > 0) {
+        p.setPen(hot_ ? g_colors.accent : g_colors.fgDim);
+        const qreal baseline = box.top() + (fm.ascent() - fm.descent()) / 2.0;
+        p.drawText(QPointF(textX, baseline), text_);
+    }
 }
 
 bool FloatingLabel::eventFilter(QObject* watched, QEvent* event) {
-    switch(event->type()) {
-    case QEvent::Move:
-    case QEvent::Resize:
-    case QEvent::Show:
-    case QEvent::Hide:
-    case QEvent::LayoutRequest:
-    case QEvent::DynamicPropertyChange:
-        reposition();
-        break;
-    case QEvent::Enter:
-    case QEvent::HoverEnter:
-        if(watched == framed_) {
-            setHot(true);
+    if(watched == framed_) {
+        switch(event->type()) {
+        case QEvent::Resize:
+        case QEvent::Show:
+        case QEvent::LayoutRequest:
+        case QEvent::DynamicPropertyChange:
+        case QEvent::FontChange:
+            sync();
+            break;
+        case QEvent::ChildAdded:
+            // keep the line above children added later (pages, popups)
+            QMetaObject::invokeMethod(this, &FloatingLabel::keepOnTop, Qt::QueuedConnection);
+            break;
+        case QEvent::Enter:
+        case QEvent::HoverEnter:
+            if(!hot_) {
+                hot_ = true;
+                update();
+            }
+            break;
+        case QEvent::Leave:
+        case QEvent::HoverLeave:
+            if(hot_) {
+                hot_ = false;
+                update();
+            }
+            break;
+        default:
+            break;
         }
-        break;
-    case QEvent::Leave:
-    case QEvent::HoverLeave:
-        if(watched == framed_) {
-            setHot(false);
-        }
-        break;
-    default:
-        break;
     }
-    return QLabel::eventFilter(watched, event);
+    return QWidget::eventFilter(watched, event);
 }
 
 void boxDialog(QDialog* dialog, const QString& label) {
     if(!g_enabled || !dialog) {
         return;
     }
-    // keep the dialog's own layout and inset its contents inside the border
+    // keep the dialog's own layout and inset its contents inside the box
     dialog->setContentsMargins(10, kLineY + 10, 10, 10);
-    dialog->installEventFilter(new BorderPainter(dialog));
-    FloatingLabel::attach(dialog, label, dialog);
+    FloatingLabel::attach(dialog, label, 4);
 }
 
 } // namespace Tty

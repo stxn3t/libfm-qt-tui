@@ -19,9 +19,9 @@
 
 #include "libfmqtglobals.h"
 #include <QColor>
-#include <QLabel>
 #include <QPointer>
 #include <QString>
+#include <QWidget>
 #include <memory>
 
 class QWidget;
@@ -55,6 +55,25 @@ LIBFM_QT_API void setEnabled(bool enabled);
 LIBFM_QT_API const Colors& colors();
 LIBFM_QT_API void setColors(const Colors& colors);
 
+// Box line and label metrics, from tty.conf.
+struct Metrics {
+    int borderWidth = 1;
+    Qt::PenStyle borderStyle = Qt::SolidLine;
+    int radius = 3;
+    int labelPixelSize = 12;
+    int labelWeight = 500;
+};
+LIBFM_QT_API const Metrics& metrics();
+LIBFM_QT_API void setMetrics(const Metrics& metrics);
+
+// Window background opacity, 0.0 - 1.0 (1.0 = solid). Below 1.0 the
+// background is see-through (blurred by the compositor if it blurs);
+// text, lines and icons stay solid.
+LIBFM_QT_API qreal opacity();
+LIBFM_QT_API void setOpacity(qreal opacity);
+// `color` with the window opacity applied as its alpha.
+LIBFM_QT_API QColor translucent(const QColor& color);
+
 // Show file icons in list-style views (detailed list, side pane).
 LIBFM_QT_API bool listIcons();
 LIBFM_QT_API void setListIcons(bool show);
@@ -66,25 +85,32 @@ LIBFM_QT_API QColor colorForFile(const std::shared_ptr<const Fm::FileInfo>& file
 // The prefix drawn before list items: "> " for the current one, "  " otherwise.
 LIBFM_QT_API QString cursorPrefix(bool current);
 
-// A label that sits on the top border line of `framed`, like a fieldset
-// legend. It follows the widget's geometry and visibility, and lights up
-// in the accent colour while the mouse is over the box.
-// The label is a child of `host` (default: framed->parentWidget()), which must
-// not be a QSplitter or a widget whose layout would swallow it.
-class LIBFM_QT_API FloatingLabel : public QLabel {
+// A box around `framed` with a label sitting on its top line, like a
+// fieldset legend. It is drawn by a transparent overlay on top of the
+// widget: the line runs `ttyLineY` px (default 8) below the widget's top,
+// with a gap where the label is, so nothing has to paint over the line
+// (which also works on a see-through background). Line and label light up
+// while the mouse is over the box.
+class LIBFM_QT_API FloatingLabel : public QWidget {
     Q_OBJECT
 public:
-    static FloatingLabel* attach(QWidget* framed, const QString& text, QWidget* host = nullptr);
+    // `inset`: distance of the box's sides and bottom from the widget's edges.
+    static FloatingLabel* attach(QWidget* framed, const QString& text, int inset = 0);
     void setLabel(const QString& text);
+    QString label() const { return text_; }
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void paintEvent(QPaintEvent* event) override;
 
 private:
-    FloatingLabel(QWidget* framed, QWidget* host);
-    void reposition();
-    void setHot(bool hot);
+    FloatingLabel(QWidget* framed, int inset);
+    void sync();
+    void keepOnTop();
     QPointer<QWidget> framed_;
+    QString text_;
+    int inset_;
+    bool hot_ = false;
 };
 
 // Wrap a dialog's existing layout in a box carrying `label` on its border.
