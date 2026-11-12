@@ -74,8 +74,13 @@ static void ttyAdjustOption(QStyleOptionViewItem& opt, const QModelIndex& index,
         // secondary columns (size, date, type...) are dim, like the mockup
         opt.palette.setColor(QPalette::Text, c.fgDim);
         opt.palette.setColor(QPalette::HighlightedText, c.fgDim);
+        if(opt.widget && opt.widget->inherits("Fm::PlacesView")) {
+            // the eject button: text-height, so drive rows match the others
+            const int h = opt.fontMetrics.height();
+            opt.decorationSize = QSize(h, h);
+        }
     }
-    if(!Tty::listIcons()) {
+    if(!Tty::listIcons() && index.column() == 0) {
         opt.icon = QIcon();
         opt.features &= ~QStyleOptionViewItem::HasDecoration;
         opt.decorationSize = QSize(0, 0);

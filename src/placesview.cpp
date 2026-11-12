@@ -19,6 +19,7 @@
 
 
 #include "placesview.h"
+#include "tty.h"
 #include "placesmodel.h"
 #include "placesmodelitem.h"
 #include "mountoperation.h"
@@ -147,6 +148,10 @@ PlacesView::PlacesView(QWidget* parent):
     delegate->setFileInfoRole(PlacesModel::FileInfoRole);
     delegate->setIconInfoRole(PlacesModel::FmIconRole);
     setItemDelegateForColumn(0, delegate);
+    if(Tty::enabled()) {
+        // tty look: the eject column too, so its icon is text-height
+        setItemDelegateForColumn(1, delegate);
+    }
 
     model_ = PlacesModel::globalInstance();
     if(!proxyModel_) {

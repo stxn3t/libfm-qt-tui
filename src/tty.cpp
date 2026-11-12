@@ -235,9 +235,10 @@ bool FloatingLabel::eventFilter(QObject* watched, QEvent* event) {
 }
 
 void boxDialog(QDialog* dialog, const QString& label) {
-    if(!g_enabled || !dialog) {
+    if(!g_enabled || !dialog || dialog->property("ttyBoxed").toBool()) {
         return;
     }
+    dialog->setProperty("ttyBoxed", true);
     // keep the dialog's own layout and inset its contents inside the box
     dialog->setContentsMargins(10, kLineY + 10, 10, 10);
     FloatingLabel::attach(dialog, label, 4);
